@@ -43,6 +43,56 @@ class NoSpaceFGKBot(commands.Bot):
         )
         self.config: BotConfig = config
         self.start_time: datetime.datetime | None = None
+        self.tree.on_error = self.on_tree_error
+
+    async def on_interaction(self, interaction: discord.Interaction) -> None:
+        """Fires on every interaction received.
+
+        Injects the start time for tracking interaction latency.
+        """
+        if interaction.type == discord.InteractionType.application_command:
+            import time
+            interaction.extras["start_time"] = time.perf_counter()
+        await self.process_application_commands(interaction)
+
+    async def on_tree_error(
+        self,
+        interaction: discord.Interaction,
+        error: discord.app_commands.AppCommandError
+    ) -> None:
+        """Handle slash command execution errors globally.
+
+        Logs failure latency, user context, and exception details.
+        """
+        import time
+        from utils.logger import log_command
+
+        start_time = interaction.extras.get("start_time")
+        execution_time = time.perf_counter() - start_time if start_time else 0.0
+
+        command_name = interaction.command.name if interaction.command else "Unknown"
+
+        log_command(
+            user_id=interaction.user.id,
+            guild_id=interaction.guild.id if interaction.guild else None,
+            channel_id=interaction.channel.id if interaction.channel else None,
+            command_name=command_name,
+            execution_time=execution_time,
+            status="FAILED",
+            exception=error
+        )
+
+        log_exception(error, f"Slash command '{command_name}' failed:")
+
+        # Respond to user if interaction has not been acknowledged
+        if not interaction.response.is_done():
+            try:
+                await interaction.response.send_message(
+                    "An error occurred while executing this command.",
+                    ephemeral=True
+                )
+            except discord.HTTPException:
+                pass
 
     async def setup_hook(self) -> None:
         """Coroutine executed during bot startup to load cogs and sync commands.
@@ -96,10 +146,10 @@ class NoSpaceFGKBot(commands.Bot):
                 raise CogLoadError(f"Failed to load cog {extension_name}: {e}") from e
 
     async def sync_commands(self) -> None:
-        """Synchronize the command tree globally or to a development guild.
+        """Synchronize the command tree to a development guild if configured.
 
-        Uses the DEVELOPMENT_GUILD_ID configuration to sync commands instantly
-        during development, avoiding global rate limits.
+        If no development guild is configured, warns that global sync must be performed
+        manually to prevent hitting rate limits during bot startup.
         """
         try:
             if self.config.development_guild_id:
@@ -108,10 +158,34 @@ class NoSpaceFGKBot(commands.Bot):
                 await self.tree.sync(guild=guild)
                 logger.info(f"Command tree synchronized to dev guild {self.config.development_guild_id}.")
             else:
-                await self.tree.sync()
-                logger.info("Command tree synchronized globally.")
+                logger.warning(
+                    "Automatic command sync skipped. No DEVELOPMENT_GUILD_ID was provided. "
+                    "Global command tree must be synchronized manually (e.g. via a /sync command) "
+                    "to prevent rate limits."
+                )
         except Exception as e:
             log_exception(e, "Failed to synchronize application commands:")
+
+    async def sync_tree(self, guild_id: int | None = None) -> None:
+        """Synchronize application commands either globally or to a specific guild.
+
+        This helper can be invoked by owner commands to trigger manual synchronization.
+
+        Args:
+            guild_id: The ID of the guild to sync commands to, or None for global sync.
+        """
+        try:
+            if guild_id:
+                guild = discord.Object(id=guild_id)
+                self.tree.copy_global_to(guild=guild)
+                synced = await self.tree.sync(guild=guild)
+                logger.info(f"Synchronized {len(synced)} commands to guild {guild_id}.")
+            else:
+                synced = await self.tree.sync()
+                logger.info(f"Synchronized {len(synced)} commands globally.")
+        except Exception as e:
+            log_exception(e, f"Failed to sync command tree (guild_id={guild_id}):")
+            raise
 
     async def reload_all_extensions(self) -> None:
         """Reload all loaded cogs and event listeners.

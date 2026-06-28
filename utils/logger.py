@@ -106,14 +106,31 @@ def log_exception(error: Exception, message: str = "An unexpected exception occu
     logger.error(f"{message} {error}", exc_info=error)
 
 
-def log_command(user_id: int, guild_id: int | None, command_name: str, args: Any) -> None:
-    """Placeholder logging function for tracking bot commands.
+def log_command(
+    user_id: int,
+    guild_id: int | None,
+    channel_id: int | None,
+    command_name: str,
+    execution_time: float,
+    status: str,
+    exception: Exception | None = None
+) -> None:
+    """Log details of a slash command execution (success or failure).
 
     Args:
         user_id: ID of the executing user.
         guild_id: ID of the guild where the command was run, or None if in DM.
-        command_name: The name of the command.
-        args: Arguments supplied to the command.
+        channel_id: ID of the channel where the command was run, or None.
+        command_name: Name of the executed command.
+        execution_time: Total execution time in seconds.
+        status: The completion status (e.g. 'SUCCESS', 'FAILED').
+        exception: The raised exception if the command failed, or None.
     """
     guild_str = f"Guild: {guild_id}" if guild_id else "DMs"
-    logger.info(f"[COMMAND] User: {user_id} | {guild_str} | Command: {command_name} | Args: {args}")
+    channel_str = f"Channel: {channel_id}" if channel_id else "None"
+    error_msg = f" | Error: {exception}" if exception else ""
+    logger.info(
+        f"[COMMAND] User: {user_id} | {guild_str} | {channel_str} | "
+        f"Command: {command_name} | Latency: {execution_time * 1000:.2f}ms | "
+        f"Status: {status}{error_msg}"
+    )
