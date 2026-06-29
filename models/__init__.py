@@ -1,5 +1,6 @@
 """Models package for NoSpaceFGK.
 
-Contains domain representations, business objects, and data structures
-representing core application concepts.
+Exposes domain dataclasses.
 """
+
+from models.domain import User, Guild, BotSettings, CommandUsage, AuditLog

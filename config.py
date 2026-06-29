@@ -6,6 +6,7 @@ coerces types, and provides clean default fallback values.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
 from dotenv import load_dotenv
 from utils.exceptions import ConfigurationError
 from utils.helpers import parse_csv_to_integers, is_integer
@@ -23,6 +24,8 @@ class BotConfig:
     log_level: str
     owner_ids: list[int]
     development_guild_id: int | None
+    database_path: Path
+    cache_ttl: int
 
 
 def load_config() -> BotConfig:
@@ -81,11 +84,23 @@ def load_config() -> BotConfig:
             )
         development_guild_id = int(dev_guild_raw)
 
+    # 7. Handle DATABASE_PATH (Default: 'data/bot.db')
+    database_path_raw = os.getenv("DATABASE_PATH", "data/bot.db")
+    database_path = Path(database_path_raw)
+
+    # 8. Handle CACHE_TTL (Default: 300)
+    cache_ttl_raw = os.getenv("CACHE_TTL", "300")
+    if not is_integer(cache_ttl_raw):
+        raise ConfigurationError(f"Environment variable 'CACHE_TTL' must be an integer, got: '{cache_ttl_raw}'")
+    cache_ttl = int(cache_ttl_raw)
+
     return BotConfig(
         discord_token=discord_token,
         client_id=client_id,
         bot_prefix=bot_prefix,
         log_level=log_level,
         owner_ids=owner_ids,
-        development_guild_id=development_guild_id
+        development_guild_id=development_guild_id,
+        database_path=database_path,
+        cache_ttl=cache_ttl
     )

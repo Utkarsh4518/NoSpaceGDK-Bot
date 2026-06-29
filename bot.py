@@ -1,7 +1,8 @@
 """Custom Discord bot class for NoSpaceFGK.
 
 Defines the specialized commands.Bot subclass that manages extension loading,
-slash command tree synchronization, latency logging, and graceful shutdown.
+slash command tree synchronization, latency logging, database lifecycle,
+and lightweight dependency injection setups.
 """
 
 import datetime
@@ -10,6 +11,8 @@ from typing import Any
 import discord
 from discord.ext import commands
 from config import BotConfig
+from database.connection import DatabaseManager
+from services.service_container import ServiceContainer
 from utils.constants import COGS_DIR
 from utils.exceptions import BotStartupError, CogLoadError, ExtensionError
 from utils.logger import logger, log_exception, log_shutdown
@@ -18,7 +21,8 @@ from utils.logger import logger, log_exception, log_shutdown
 class NoSpaceFGKBot(commands.Bot):
     """Custom Bot class containing setup hook, cog loader, and lifecycle handling.
 
-    Extends commands.Bot to incorporate custom configuration and logging integration.
+    Extends commands.Bot to incorporate configuration, logging, database connections,
+    and a dependency injection service container.
     """
 
     def __init__(self, config: BotConfig, *args: Any, **kwargs: Any) -> None:
@@ -44,6 +48,10 @@ class NoSpaceFGKBot(commands.Bot):
         self.config: BotConfig = config
         self.start_time: datetime.datetime | None = None
         self.tree.on_error = self.on_tree_error
+
+        # Infrastructure placeholders
+        self.container: ServiceContainer | None = None
+        self.db: DatabaseManager | None = None
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:
         """Fires on every interaction received.
@@ -129,13 +137,60 @@ class NoSpaceFGKBot(commands.Bot):
         """
         self.start_time = datetime.datetime.now(datetime.timezone.utc)
 
-        # 1. Load the events extension package first
+        # 1. Initialize Database & Run Migrations
+        self.db = DatabaseManager(self.config.database_path)
+        await self.db.connect()
+
+        from database.migration import MigrationRunner
+        from database.seed import seed_database
+
+        migration_runner = MigrationRunner(self.db)
+        await migration_runner.run_migrations()
+
+        # Seed initial defaults
+        await seed_database(self.db, self.config.development_guild_id)
+
+        # 2. Setup Dependency Injection (DI) Container & Register Services
+        from services import (
+            ConfigService, CacheService, LoggingService, ResponseService, BotService
+        )
+        from repositories import (
+            GuildRepository, UserRepository, SettingsRepository, UsageRepository
+        )
+
+        container = ServiceContainer()
+
+        # Core Config & Cache singletons
+        container.register(ConfigService, lambda: ConfigService(self.config))
+        container.register(CacheService, lambda: CacheService(float(self.config.cache_ttl)))
+
+        # Repositories (injecting active DatabaseManager)
+        container.register(GuildRepository, lambda: GuildRepository(self.db))
+        container.register(UserRepository, lambda: UserRepository(self.db))
+        container.register(SettingsRepository, lambda: SettingsRepository(self.db))
+        container.register(UsageRepository, lambda: UsageRepository(self.db))
+
+        # Services
+        container.register(LoggingService, lambda: LoggingService(
+            container.get(UsageRepository)
+        ))
+        container.register(ResponseService, lambda: ResponseService())
+        container.register(BotService, lambda: BotService(
+            guild_repo=container.get(GuildRepository),
+            user_repo=container.get(UserRepository),
+            settings_repo=container.get(SettingsRepository),
+            cache_service=container.get(CacheService)
+        ))
+
+        self.container = container
+
+        # 3. Load the events extension package first
         await self._load_events()
 
-        # 2. Dynamic loading of cogs from the cogs directory
+        # 4. Dynamic loading of cogs from the cogs directory
         await self._load_cogs()
 
-        # 3. Synchronize slash command tree
+        # 5. Synchronize slash command tree
         await self.sync_commands()
 
     async def _load_events(self) -> None:
@@ -245,7 +300,10 @@ class NoSpaceFGKBot(commands.Bot):
                 log_exception(e, f"Failed to reload cog {extension_name}:")
 
     async def close(self) -> None:
-        """Override close to log shutdown operations cleanly."""
+        """Override close to log shutdown operations cleanly and close database handles."""
         logger.info("Closing Discord connection...")
         await super().close()
+        if self.db:
+            await self.db.disconnect()
         log_shutdown()
+
