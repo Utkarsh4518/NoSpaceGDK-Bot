@@ -12,16 +12,13 @@ This project is engineered with stability, strict configurations, and clean arch
 
 ---
 
-## Planned Features
+## Command & Framework Features (Phase 2)
 
-*   **Music Streaming**: Rich audio experience supporting voice channel playback.
-*   **AI Assistant**: Conversational interactions powered by AI APIs.
-*   **Moderation**: Auto-mod, user logging, bans, kicks, and timeouts.
-*   **Memes**: Automated meme generator and fun text commands.
-*   **Utility & Core**: User lookup, server info, tools, and latency tracking.
-*   **Dashboard**: FastAPI-based web panel for real-time bot configuration.
-*   **Database**: SQLite/PostgreSQL layer for user profile management.
-*   **Docker Integration**: Streamlined containerization for production deployment.
+*   **centralized Error Handling**: Custom Command Tree error mapping in `bot.py` translates standard Discord exceptions (like cooldowns, missing permissions, checks failures) into clean, ephemeral error embeds.
+*   **Reusable UI Components**: Defines a standardized confirmation dialog view (`ConfirmationView`) and an abstract paginator (`PaginationView`) with Home, Previous, Next, and Close controls in the `ui/` package.
+*   **Slash Command Decorators**: Simplifies checks using custom wrappers (`@is_owner()`, `@is_premium()`, `@cooldown_command()`, `@guild_only_command()`, and `@permission_check()`).
+*   **Autocomplete Query Framework**: Modularizes autocomplete search query filtering under `autocomplete/query_utils.py` to support dynamic slash choices.
+*   **Static & Relative Helpers**: Exposes common text converters, Discord Snowflake to DateTime converters, markdown escaping, and relative timestamp makers in `utils/helpers.py`.
 
 ---
 
@@ -46,17 +43,28 @@ NoSpaceFGK/
 │   ├── memes.py          # Memes placeholders
 │   ├── moderation.py     # Moderation placeholders
 │   ├── music.py          # Music streaming placeholders
-│   ├── owner.py          # Owner administrative tools
-│   └── utility.py        # General utilities
+│   ├── owner.py          # Owner administrative tools (slash command /sync)
+│   └── utility.py        # General and Utility slash commands (ping, serverinfo, help pagination)
 ├── events/               # Event listener package
 │   ├── __init__.py       # Package initializer and setup hooks
-│   └── listeners.py      # Core Discord gateway event handlers
+│   ├── ready.py          # Dynamic gateway connection events
+│   ├── members.py        # Dynamic member lifecycle handlers
+│   ├── messages.py       # Dynamic message listeners and command completion loggers
+│   └── errors.py         # Prefix command execution error logs
+├── checks/               # Permission logic evaluations and owner predicates
+├── decorators/           # Reusable command check wrappers
+├── autocomplete/         # Choice query parsing filters
+├── ui/                   # Reusable UI component views and paginated view templates
+├── services/             # Empty placeholder layer for business logic coordinators
+├── repositories/         # Empty placeholder layer for data storage adapters
+├── models/               # Empty placeholder layer for domain concepts
+├── schemas/              # Empty placeholder layer for validation contracts
 └── utils/                # Utility package for shared resources
     ├── __init__.py       # Package initializer
     ├── constants.py      # Read-only design system colors and paths
-    ├── embeds.py         # Standardized embed template wrappers
+    ├── embeds.py         # Standardized embed template wrappers with footer styling
     ├── exceptions.py     # Custom exception classes
-    ├── helpers.py        # Common parser and formatter functions
+    ├── helpers.py        # Snowflake converters, relative date strings, duration formatters
     └── logger.py         # Dual-channel Rich console and TimedRotatingFile logging
 ```
 
@@ -100,6 +108,7 @@ NoSpaceFGK/
     *   `DISCORD_TOKEN`: Your Discord Developer Application token.
     *   `CLIENT_ID`: Your Discord Bot Client/Application ID.
     *   `OWNER_IDS`: Comma-separated list of developer Discord IDs.
+    *   `DEVELOPMENT_GUILD_ID`: Optional guild ID for command synchronization during testing.
 
 5.  **Start the Application**:
     ```bash
@@ -111,7 +120,7 @@ NoSpaceFGK/
 ## Development Roadmap
 
 *   [x] **Phase 1: Foundation & Architecture** (Structure, Configuration, Logging, Launchers, Event Handlers).
-*   [ ] **Phase 2: Core Utilities** (Database integration, basic commands, embeds templates integration).
+*   [x] **Phase 2: Core Discord Framework** (Slash command systems, dynamic help directory, central error handling, UI Views, decorators).
 *   [ ] **Phase 3: Music & AI Services** (Voice connection, audio player, AI API interface).
 *   [ ] **Phase 4: Advanced Features** (Moderation, Memes, Web dashboard, API hooks).
 *   [ ] **Phase 5: Deployments & Operations** (Docker, Github actions, CI/CD, production scale tests).
@@ -133,3 +142,4 @@ Distributed under the MIT License. See `LICENSE` in the future for more informat
 5.  Commit changes (`git commit -m 'Add some AmazingFeature'`).
 6.  Push to the branch (`git push origin feature/AmazingFeature`).
 7.  Open a Pull Request.
+

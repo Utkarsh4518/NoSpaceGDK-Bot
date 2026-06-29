@@ -62,16 +62,19 @@ class NoSpaceFGKBot(commands.Bot):
     ) -> None:
         """Handle slash command execution errors globally.
 
-        Logs failure latency, user context, and exception details.
+        Logs failure latency, user context, and exception details. Maps exceptions
+        to custom user-facing embeds.
         """
         import time
         from utils.logger import log_command
+        from utils.embeds import error_embed
 
         start_time = interaction.extras.get("start_time")
         execution_time = time.perf_counter() - start_time if start_time else 0.0
 
         command_name = interaction.command.name if interaction.command else "Unknown"
 
+        # Log command failure context
         log_command(
             user_id=interaction.user.id,
             guild_id=interaction.guild.id if interaction.guild else None,
@@ -84,15 +87,40 @@ class NoSpaceFGKBot(commands.Bot):
 
         log_exception(error, f"Slash command '{command_name}' failed:")
 
-        # Respond to user if interaction has not been acknowledged
-        if not interaction.response.is_done():
-            try:
-                await interaction.response.send_message(
-                    "An error occurred while executing this command.",
-                    ephemeral=True
-                )
-            except discord.HTTPException:
-                pass
+        # Parse error type for user feedback
+        embed_title = "Command Error"
+        embed_desc = "An unexpected error occurred while processing your command."
+
+        if isinstance(error, discord.app_commands.CommandOnCooldown):
+            embed_title = "Command on Cooldown"
+            embed_desc = f"This command is on cooldown. Please try again in {error.retry_after:.2f} seconds."
+        elif isinstance(error, discord.app_commands.MissingPermissions):
+            embed_title = "Missing Permissions"
+            missing_perms = ", ".join(f"`{p}`" for p in error.missing_permissions)
+            embed_desc = f"You do not have the required permissions to execute this command: {missing_perms}"
+        elif isinstance(error, discord.app_commands.BotMissingPermissions):
+            embed_title = "Bot Missing Permissions"
+            missing_perms = ", ".join(f"`{p}`" for p in error.missing_permissions)
+            embed_desc = f"The bot does not have the required permissions to execute this command: {missing_perms}"
+        elif isinstance(error, discord.app_commands.CheckFailure):
+            embed_title = "Permission Denied"
+            error_str = str(error)
+            if "is_owner_predicate" in error_str:
+                embed_desc = "This command is restricted to bot owners only."
+            elif "is_premium_predicate" in error_str:
+                embed_desc = "This command is restricted to premium subscribers only."
+            else:
+                embed_desc = "You do not meet the requirements to execute this command."
+
+        # Send response safely
+        embed = error_embed(title=embed_title, description=embed_desc)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message(embed=embed, ephemeral=True)
+            else:
+                await interaction.followup.send(embed=embed, ephemeral=True)
+        except discord.HTTPException:
+            pass
 
     async def setup_hook(self) -> None:
         """Coroutine executed during bot startup to load cogs and sync commands.
