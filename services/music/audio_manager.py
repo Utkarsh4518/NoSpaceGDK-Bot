@@ -4,6 +4,7 @@ Defines placeholders for volume controls, filters, seeking indices, and crossfad
 """
 
 from typing import Dict, Optional
+import discord
 from models.music import PlaybackOptions
 from utils.logger import logger
 
@@ -37,6 +38,31 @@ class AudioManager:
     def volume(self) -> float:
         """Access current volume."""
         return self._options.volume
+
+    def create_audio_source(self, stream_url: str) -> discord.AudioSource:
+        """Create a discord-compatible AudioSource from a stream URL.
+
+        Args:
+            stream_url: Direct audio stream URL.
+
+        Returns:
+            The configured discord.AudioSource.
+        """
+        before_options = (
+            "-reconnect 1 "
+            "-reconnect_streamed 1 "
+            "-reconnect_delay_max 5"
+        )
+        options = "-vn"
+
+        logger.info(f"Audio operation: Generating FFmpeg audio source with volume={self._options.volume}.")
+        ffmpeg_source = discord.FFmpegPCMAudio(
+            stream_url,
+            before_options=before_options,
+            options=options
+        )
+        volume_source = discord.PCMVolumeTransformer(ffmpeg_source, volume=self._options.volume)
+        return volume_source
 
     def set_eq_preset(self, preset_name: str) -> None:
         """Apply a pre-configured Equalizer band.

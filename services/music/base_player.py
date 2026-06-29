@@ -32,6 +32,10 @@ class BaseMusicPlayer:
 
         self._state: PlayerState = PlayerState.IDLE
         self._current_track: Optional[QueueItem] = None
+        self._start_time: Optional[float] = None
+        self._paused_at: Optional[float] = None
+        self._paused_duration: float = 0.0
+
         self._listeners: Dict[str, List[Callable[..., Any]]] = {
             "TrackStart": [],
             "TrackEnd": [],
@@ -89,38 +93,110 @@ class BaseMusicPlayer:
             logger.warning(f"Player state: Play failed in Guild {self.guild_id} (Not connected to voice).")
             return
 
+        if self.voice.voice_client and self.voice.voice_client.is_playing():
+            self.voice.voice_client.stop()
+
+        self._state = PlayerState.BUFFERING
         next_item = await self.queue.get_next()
         if not next_item:
             self._state = PlayerState.IDLE
+            self._current_track = None
             self.dispatch("QueueEmpty")
             logger.info(f"Player state: Queue is empty in Guild {self.guild_id}.")
             return
 
         self._current_track = next_item
-        self._state = PlayerState.PLAYING
-        logger.info(f"Player state: Started playing '{next_item.track.title}' (UUID: {next_item.uuid}) in Guild {self.guild_id}.")
-        self.dispatch("TrackStart", next_item)
+        logger.info(f"Player state: Fetching stream for '{next_item.track.title}'...")
+
+        try:
+            from services.music.provider_manager import ProviderManager
+            provider_manager = self.bot.container.get(ProviderManager)
+            provider = provider_manager.get_provider(next_item.track.provider)
+            if not provider:
+                raise ValueError(f"No registered provider found for '{next_item.track.provider}'.")
+
+            stream_url = await provider.get_stream(next_item.track)
+            audio_source = self.audio.create_audio_source(stream_url)
+
+            self._start_time = asyncio.get_running_loop().time()
+            self._paused_duration = 0.0
+            self._paused_at = None
+            self._state = PlayerState.PLAYING
+            self.voice.voice_client.play(
+                audio_source,
+                after=lambda e: self._on_track_end(e)
+            )
+
+            logger.info(f"Player state: Playing '{next_item.track.title}' (UUID: {next_item.uuid}) in Guild {self.guild_id}.")
+            self.dispatch("TrackStart", next_item)
+        except Exception as e:
+            logger.error(f"Player state: Failed to play '{next_item.track.title}': {e}", exc_info=True)
+            self._state = PlayerState.IDLE
+            self.bot.loop.call_soon_threadsafe(
+                asyncio.create_task,
+                self._advance_queue()
+            )
+
+    def _on_track_end(self, error: Optional[Exception]) -> None:
+        """Invoked by VoiceClient when a track finishes playing."""
+        if error:
+            logger.error(f"Voice Client: Playback finished with error in Guild {self.guild_id}: {error}")
+
+        self.bot.loop.call_soon_threadsafe(
+            asyncio.create_task,
+            self._advance_queue()
+        )
+
+    async def _advance_queue(self) -> None:
+        """Handle track completion logic and advance to the next track."""
+        old_track = self._current_track
+        if old_track:
+            self.dispatch("TrackEnd", old_track)
+            try:
+                from repositories.history_repository import HistoryRepository
+                history_repo = self.bot.container.get(HistoryRepository)
+                await history_repo.add_to_history(
+                    self.guild_id,
+                    old_track.track.uuid,
+                    old_track.added_by
+                )
+            except Exception as ex:
+                logger.error(f"Player state: History logger write failed: {ex}")
+
+        if self._state == PlayerState.DESTROYED:
+            return
+
+        self._state = PlayerState.IDLE
+        self._current_track = None
+        await self.play()
 
     async def pause(self) -> None:
         """Pause the current playback."""
-        if self._state == PlayerState.PLAYING:
+        if self._state == PlayerState.PLAYING and self.voice.voice_client:
+            self.voice.voice_client.pause()
+            self._paused_at = asyncio.get_running_loop().time()
             self._state = PlayerState.PAUSED
             logger.info(f"Player state: Paused playback in Guild {self.guild_id}.")
             self.dispatch("TrackPause", self._current_track)
 
     async def resume(self) -> None:
         """Resume paused playback."""
-        if self._state == PlayerState.PAUSED:
+        if self._state == PlayerState.PAUSED and self.voice.voice_client:
+            self.voice.voice_client.resume()
+            if self._paused_at is not None:
+                self._paused_duration += asyncio.get_running_loop().time() - self._paused_at
+                self._paused_at = None
             self._state = PlayerState.PLAYING
             logger.info(f"Player state: Resumed playback in Guild {self.guild_id}.")
             self.dispatch("TrackResume", self._current_track)
 
     async def stop(self) -> None:
         """Stop playback and clear current track status."""
+        if self.voice.voice_client and (self.voice.voice_client.is_playing() or self.voice.voice_client.is_paused()):
+            self.voice.voice_client.stop()
         self._state = PlayerState.STOPPED
         self._current_track = None
         logger.info(f"Player state: Stopped playback in Guild {self.guild_id}.")
-        self.dispatch("TrackEnd", None)
 
     async def skip(self) -> None:
         """Skip current track and advance queue."""
@@ -131,8 +207,10 @@ class BaseMusicPlayer:
         logger.info(f"Player state: Skipped track '{skipped_track.track.title}' in Guild {self.guild_id}.")
         self.dispatch("TrackSkip", skipped_track)
 
-        # Advance queue
-        await self.play()
+        if self.voice.voice_client and (self.voice.voice_client.is_playing() or self.voice.voice_client.is_paused()):
+            self.voice.voice_client.stop()
+        else:
+            await self._advance_queue()
 
     async def destroy(self) -> None:
         """Halt all playback operations and clear connections."""
@@ -142,3 +220,14 @@ class BaseMusicPlayer:
         await self.voice.leave_channel()
         logger.info(f"Player state: Destroyed player instance in Guild {self.guild_id}.")
         self.dispatch("PlayerDestroyed")
+
+    @property
+    def position(self) -> float:
+        """Get elapsed playback position of the current track in seconds."""
+        if not self._start_time:
+            return 0.0
+        loop = asyncio.get_event_loop()
+        if self._state == PlayerState.PAUSED and self._paused_at:
+            return self._paused_at - self._start_time - self._paused_duration
+        return loop.time() - self._start_time - self._paused_duration
+
