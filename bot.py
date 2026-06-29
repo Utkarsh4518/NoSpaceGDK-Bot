@@ -13,6 +13,7 @@ from discord.ext import commands
 from config import BotConfig
 from database.connection import DatabaseManager
 from services.service_container import ServiceContainer
+from services.music.player_manager import PlayerManager
 from utils.constants import COGS_DIR
 from utils.exceptions import BotStartupError, CogLoadError, ExtensionError
 from utils.logger import logger, log_exception, log_shutdown
@@ -155,11 +156,13 @@ class NoSpaceFGKBot(commands.Bot):
             ConfigService, CacheService, LoggingService, ResponseService, BotService, MusicService
         )
         from services.music import (
-            PlayerManager, ProviderManager, TrackManager
+            PlayerManager, ProviderManager, TrackManager,
+            MatchingService, MetadataService, ProviderRouter
         )
         from repositories import (
             GuildRepository, UserRepository, SettingsRepository, UsageRepository,
-            MusicRepository, PlaylistRepository, HistoryRepository
+            MusicRepository, PlaylistRepository, HistoryRepository,
+            SpotifyCacheRepository, SpotifyImportRepository
         )
 
         container = ServiceContainer()
@@ -176,17 +179,55 @@ class NoSpaceFGKBot(commands.Bot):
         container.register(MusicRepository, lambda: MusicRepository(self.db))
         container.register(PlaylistRepository, lambda: PlaylistRepository(self.db))
         container.register(HistoryRepository, lambda: HistoryRepository(self.db))
+        container.register(SpotifyCacheRepository, lambda: SpotifyCacheRepository(self.db))
+        container.register(SpotifyImportRepository, lambda: SpotifyImportRepository(self.db))
 
-        # Providers Manager setup
+        # Providers setup
+        from providers import YouTubeProvider, SoundCloudProvider
+        youtube_provider = YouTubeProvider()
+
+        # Spotify provider (graceful degradation if credentials are missing)
+        spotify_provider = None
+        if self.config.spotify_client_id and self.config.spotify_client_secret:
+            from providers import SpotifyProvider
+            spotify_provider = SpotifyProvider(
+                client_id=self.config.spotify_client_id,
+                client_secret=self.config.spotify_client_secret
+            )
+            logger.info("Spotify integration: ENABLED.")
+        else:
+            logger.warning(
+                "Spotify integration: DISABLED. "
+                "Set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET in .env to enable."
+            )
+
+        # Provider Manager (legacy compatibility)
         def make_provider_manager() -> ProviderManager:
             pm = ProviderManager()
-            from providers import YouTubeProvider, SpotifyProvider, SoundCloudProvider
-            pm.register_provider("youtube", YouTubeProvider())
-            pm.register_provider("spotify", SpotifyProvider())
+            pm.register_provider("youtube", youtube_provider)
+            if spotify_provider:
+                pm.register_provider("spotify", spotify_provider)
             pm.register_provider("soundcloud", SoundCloudProvider())
             return pm
 
         container.register(ProviderManager, make_provider_manager)
+
+        # Provider Router (new multi-provider dispatch)
+        container.register(ProviderRouter, lambda: ProviderRouter(
+            youtube_provider=youtube_provider,
+            spotify_provider=spotify_provider
+        ))
+
+        # Matching service (Spotify -> YouTube resolution)
+        container.register(MatchingService, lambda: MatchingService(
+            youtube_provider=youtube_provider,
+            spotify_cache_repo=container.get(SpotifyCacheRepository)
+        ))
+
+        # Metadata service (in-memory TTL cache for Spotify metadata)
+        container.register(MetadataService, lambda: MetadataService(
+            ttl=self.config.cache_ttl
+        ))
 
         # Player lifecycle managers
         container.register(PlayerManager, lambda: PlayerManager(self))

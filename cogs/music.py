@@ -1,17 +1,23 @@
 """Music streaming extension for NoSpaceFGK.
 
-Contains the MusicCog which handles voice connection and audio playback using yt-dlp.
+Contains the MusicCog which handles voice connection and audio playback,
+with support for YouTube and Spotify (resolved through YouTube matching).
 """
 
+import asyncio
 import datetime
 import logging
-from typing import Optional
+from typing import List, Optional
 import discord
 from discord import app_commands
 from discord.ext import commands
 from decorators.command_dec import guild_only_command, cooldown_command
-from models.music import PlayerState
+from models.music import PlayerState, Track
 from services.music.music_service import MusicService
+from services.music.matching_service import MatchingService
+from services.music.metadata_service import MetadataService
+from services.music.provider_router import ProviderRouter, ProviderType
+from repositories.spotify_import_repo import SpotifyImportRepository
 from ui.pagination import PaginationView
 from utils.embeds import success_embed, error_embed, info_embed
 from utils.helpers import format_duration
@@ -20,7 +26,17 @@ logger = logging.getLogger("NoSpaceFGK.music")
 
 
 class MusicCog(commands.Cog, name="Music"):
-    """Cog for music streaming and audio management commands."""
+    """Cog for music streaming and audio management commands.
+
+    Supports YouTube and Spotify URLs. Spotify tracks are resolved
+    to YouTube audio streams via the MatchingService.
+    """
+
+    # Provider icon URLs for embed display
+    PROVIDER_ICONS = {
+        "youtube": "https://cdn-icons-png.flaticon.com/512/1384/1384060.png",
+        "spotify": "https://cdn-icons-png.flaticon.com/512/2111/2111624.png",
+    }
 
     def __init__(self, bot: commands.Bot) -> None:
         """Initialize the music cog.
@@ -30,7 +46,11 @@ class MusicCog(commands.Cog, name="Music"):
         """
         self.bot: commands.Bot = bot
         self.music_service: MusicService = bot.container.get(MusicService)
-        logger.info("MusicCog initialized.")
+        self.router: ProviderRouter = bot.container.get(ProviderRouter)
+        self.matching: MatchingService = bot.container.get(MatchingService)
+        self.metadata: MetadataService = bot.container.get(MetadataService)
+        self.import_repo: SpotifyImportRepository = bot.container.get(SpotifyImportRepository)
+        logger.info("MusicCog initialized (Spotify: %s).", "enabled" if self.router.spotify_enabled else "disabled")
 
     @app_commands.command(name="join", description="Join your active voice channel.")
     @guild_only_command()
@@ -73,12 +93,12 @@ class MusicCog(commands.Cog, name="Music"):
             embed=success_embed("Voice Disconnection", "Successfully disconnected and cleared guild player session.")
         )
 
-    @app_commands.command(name="play", description="Play a song or playlist from YouTube or search text.")
-    @app_commands.describe(query="A YouTube link, playlist link, or search keywords.")
+    @app_commands.command(name="play", description="Play a song or playlist from YouTube, Spotify, or search text.")
+    @app_commands.describe(query="A YouTube/Spotify link, playlist, album, artist, or search keywords.")
     @guild_only_command()
     @cooldown_command(rate=1, per=3.0)
     async def play(self, interaction: discord.Interaction, query: str) -> None:
-        """Play command querying YouTube or parsing URLs."""
+        """Universal play command supporting YouTube and Spotify."""
         user_voice = interaction.user.voice
         if not user_voice or not user_voice.channel:
             await interaction.response.send_message(
@@ -99,60 +119,266 @@ class MusicCog(commands.Cog, name="Music"):
                 )
                 return
 
-        is_playlist = "list=" in query
+        # Route query to the correct provider
+        provider_type = self.router.detect(query)
+
         try:
-            if is_playlist:
-                provider = self.music_service.providers.resolve_provider_by_url(query)
-                if not provider:
-                    provider = self.music_service.providers.get_provider("youtube")
-
-                playlist = await provider.get_playlist(query)
-                if not playlist or not playlist.tracks:
-                    await interaction.followup.send(
-                        embed=error_embed("Resolution Failed", "Failed to retrieve playlist details or playlist is empty.")
-                    )
-                    return
-
-                for track in playlist.tracks:
-                    track.requested_by = interaction.user.id
-                    await player.queue.add_track(track, interaction.user.id)
-
-                embed = success_embed(
-                    "Playlist Added 🎶",
-                    f"Added **{len(playlist.tracks)}** tracks from playlist **{playlist.name}** to the queue."
+            if provider_type == ProviderType.SPOTIFY:
+                await self._handle_spotify(interaction, player, query)
+            elif provider_type == ProviderType.SOUNDCLOUD:
+                await interaction.followup.send(
+                    embed=error_embed("Provider Unavailable", "SoundCloud playback is not yet supported.")
                 )
-                if playlist.tracks[0].thumbnail:
-                    embed.set_thumbnail(url=playlist.tracks[0].thumbnail)
-                await interaction.followup.send(embed=embed)
+            elif provider_type == ProviderType.UNKNOWN:
+                await interaction.followup.send(
+                    embed=error_embed("Unknown URL", "This URL is not recognized as a supported music provider.")
+                )
             else:
-                results = await self.music_service.search(query, provider_name="youtube")
-                if not results:
-                    await interaction.followup.send(
-                        embed=error_embed("No Results", f"Could not find any results matching '{query}'.")
-                    )
-                    return
-
-                track = results[0]
-                track.requested_by = interaction.user.id
-                await player.queue.add_track(track, interaction.user.id)
-
-                embed = success_embed(
-                    "Track Added 🎵",
-                    f"Added [**{track.title}**]({track.url}) to the queue."
-                )
-                embed.add_field(name="Duration", value=format_duration(track.duration), inline=True)
-                embed.add_field(name="Uploader", value=track.artist, inline=True)
-                if track.thumbnail:
-                    embed.set_thumbnail(url=track.thumbnail)
-                await interaction.followup.send(embed=embed)
-
-            if player.state in (PlayerState.IDLE, PlayerState.STOPPED):
-                await player.play()
+                # YouTube URL or plain search
+                await self._handle_youtube(interaction, player, query)
         except Exception as e:
             logger.error(f"Play command error: {e}", exc_info=True)
             await interaction.followup.send(
                 embed=error_embed("Playback Error", f"An error occurred while loading audio: {e}")
             )
+
+    async def _handle_youtube(self, interaction: discord.Interaction, player, query: str) -> None:
+        """Handle YouTube URLs and plain text search queries."""
+        is_playlist = "list=" in query
+
+        if is_playlist:
+            provider = self.music_service.providers.resolve_provider_by_url(query)
+            if not provider:
+                provider = self.music_service.providers.get_provider("youtube")
+
+            playlist = await provider.get_playlist(query)
+            if not playlist or not playlist.tracks:
+                await interaction.followup.send(
+                    embed=error_embed("Resolution Failed", "Failed to retrieve playlist details or playlist is empty.")
+                )
+                return
+
+            for track in playlist.tracks:
+                track.requested_by = interaction.user.id
+                await player.queue.add_track(track, interaction.user.id)
+
+            embed = success_embed(
+                "Playlist Added 🎶",
+                f"Added **{len(playlist.tracks)}** tracks from playlist **{playlist.name}** to the queue."
+            )
+            embed.set_author(name="YouTube", icon_url=self.PROVIDER_ICONS["youtube"])
+            if playlist.tracks[0].thumbnail:
+                embed.set_thumbnail(url=playlist.tracks[0].thumbnail)
+            await interaction.followup.send(embed=embed)
+        else:
+            results = await self.music_service.search(query, provider_name="youtube")
+            if not results:
+                await interaction.followup.send(
+                    embed=error_embed("No Results", f"Could not find any results matching '{query}'.")
+                )
+                return
+
+            track = results[0]
+            track.requested_by = interaction.user.id
+            await player.queue.add_track(track, interaction.user.id)
+
+            embed = success_embed(
+                "Track Added 🎵",
+                f"Added [**{track.title}**]({track.url}) to the queue."
+            )
+            embed.set_author(name="YouTube", icon_url=self.PROVIDER_ICONS["youtube"])
+            embed.add_field(name="Duration", value=format_duration(track.duration), inline=True)
+            embed.add_field(name="Uploader", value=track.artist, inline=True)
+            if track.thumbnail:
+                embed.set_thumbnail(url=track.thumbnail)
+            await interaction.followup.send(embed=embed)
+
+        if player.state in (PlayerState.IDLE, PlayerState.STOPPED):
+            await player.play()
+
+    async def _handle_spotify(self, interaction: discord.Interaction, player, query: str) -> None:
+        """Handle Spotify URLs: track, album, playlist, and artist."""
+        spotify = self.router.spotify_provider
+        if not spotify:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "Spotify Disabled",
+                    "Spotify integration is not configured. Ask the bot administrator to set "
+                    "`SPOTIFY_CLIENT_ID` and `SPOTIFY_CLIENT_SECRET` in the `.env` file."
+                )
+            )
+            return
+
+        parsed = spotify.parse_spotify_identifier(query)
+        if not parsed:
+            await interaction.followup.send(
+                embed=error_embed("Invalid Spotify URL", "Could not parse the Spotify URL or URI.")
+            )
+            return
+
+        spotify_type = parsed["type"]
+
+        if spotify_type == "track":
+            await self._spotify_track(interaction, player, query)
+        elif spotify_type == "playlist":
+            await self._spotify_collection(interaction, player, query, "playlist")
+        elif spotify_type == "album":
+            await self._spotify_collection(interaction, player, query, "album")
+        elif spotify_type == "artist":
+            await self._spotify_collection(interaction, player, query, "artist")
+        else:
+            await interaction.followup.send(
+                embed=error_embed("Unsupported Spotify Type", f"Spotify resource type '{spotify_type}' is not supported.")
+            )
+
+    async def _spotify_track(self, interaction: discord.Interaction, player, url: str) -> None:
+        """Resolve and queue a single Spotify track via YouTube matching."""
+        spotify = self.router.spotify_provider
+        spotify_track = await spotify.get_track(url)
+        if not spotify_track:
+            await interaction.followup.send(
+                embed=error_embed("Resolution Failed", "Failed to retrieve Spotify track metadata.")
+            )
+            return
+
+        match_result = await self.matching.find_match(spotify_track)
+        if not match_result:
+            await interaction.followup.send(
+                embed=error_embed(
+                    "No YouTube Match",
+                    f"Could not find a YouTube match for **{spotify_track.artist} - {spotify_track.title}**."
+                )
+            )
+            return
+
+        yt_track = match_result.track
+        yt_track.requested_by = interaction.user.id
+        await player.queue.add_track(yt_track, interaction.user.id)
+
+        embed = success_embed(
+            "Spotify Track Added 🎵",
+            f"Added [**{spotify_track.title}**]({spotify_track.url}) to the queue."
+        )
+        embed.set_author(name="Spotify → YouTube", icon_url=self.PROVIDER_ICONS["spotify"])
+        embed.add_field(name="Artist", value=spotify_track.artist, inline=True)
+        embed.add_field(name="Duration", value=format_duration(spotify_track.duration), inline=True)
+        embed.add_field(name="Match Confidence", value=f"{match_result.confidence:.0%}", inline=True)
+        embed.add_field(name="YouTube Source", value=f"[{yt_track.title}]({yt_track.url})", inline=False)
+        if spotify_track.thumbnail:
+            embed.set_thumbnail(url=spotify_track.thumbnail)
+        await interaction.followup.send(embed=embed)
+
+        # Log import
+        await self.import_repo.log_import(
+            spotify_url=url,
+            spotify_type="track",
+            track_count=1,
+            imported_by=interaction.user.id,
+            guild_id=interaction.guild_id
+        )
+
+        if player.state in (PlayerState.IDLE, PlayerState.STOPPED):
+            await player.play()
+
+    async def _spotify_collection(self, interaction: discord.Interaction, player, url: str, collection_type: str) -> None:
+        """Resolve and queue Spotify playlists, albums, or artist top tracks."""
+        spotify = self.router.spotify_provider
+
+        # Fetch metadata from Spotify
+        spotify_tracks: Optional[List[Track]] = None
+        collection_name = "Spotify Collection"
+
+        if collection_type == "playlist":
+            playlist = await spotify.get_playlist(url)
+            if playlist:
+                spotify_tracks = playlist.tracks
+                collection_name = playlist.name
+        elif collection_type == "album":
+            spotify_tracks = await spotify.get_album(url)
+            if spotify_tracks:
+                collection_name = spotify_tracks[0].metadata.get("album_name", "Spotify Album")
+        elif collection_type == "artist":
+            spotify_tracks = await spotify.get_artist_top_tracks(url, limit=20)
+            collection_name = "Top Tracks"
+
+        if not spotify_tracks:
+            await interaction.followup.send(
+                embed=error_embed("Resolution Failed", f"Failed to retrieve Spotify {collection_type} metadata.")
+            )
+            return
+
+        total = len(spotify_tracks)
+
+        # Send initial progress embed
+        progress_embed = info_embed(
+            f"Importing Spotify {collection_type.capitalize()} 🎶",
+            f"**{collection_name}**\n\nResolving tracks... `0/{total}`"
+        )
+        progress_embed.set_author(name="Spotify → YouTube", icon_url=self.PROVIDER_ICONS["spotify"])
+        if spotify_tracks[0].thumbnail:
+            progress_embed.set_thumbnail(url=spotify_tracks[0].thumbnail)
+        msg = await interaction.followup.send(embed=progress_embed, wait=True)
+
+        # Resolve tracks to YouTube
+        resolved_count = 0
+        failed_count = 0
+        first_resolved = True
+
+        for i, sp_track in enumerate(spotify_tracks):
+            try:
+                match_result = await self.matching.find_match(sp_track)
+                if match_result:
+                    yt_track = match_result.track
+                    yt_track.requested_by = interaction.user.id
+                    await player.queue.add_track(yt_track, interaction.user.id)
+                    resolved_count += 1
+
+                    # Start playback after first track resolves
+                    if first_resolved and player.state in (PlayerState.IDLE, PlayerState.STOPPED):
+                        await player.play()
+                        first_resolved = False
+                else:
+                    failed_count += 1
+                    logger.warning(f"Spotify import: No match for '{sp_track.artist} - {sp_track.title}'.")
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"Spotify import: Error matching track '{sp_track.title}': {e}")
+
+            # Update progress every 5 tracks or on the last track
+            if (i + 1) % 5 == 0 or (i + 1) == total:
+                progress_embed.description = (
+                    f"**{collection_name}**\n\n"
+                    f"Resolving tracks... `{i + 1}/{total}`\n"
+                    f"✅ Resolved: `{resolved_count}` | ❌ Failed: `{failed_count}`"
+                )
+                try:
+                    await msg.edit(embed=progress_embed)
+                except discord.HTTPException:
+                    pass
+
+        # Final summary embed
+        summary_embed = success_embed(
+            f"Spotify {collection_type.capitalize()} Imported 🎶",
+            f"**{collection_name}**\n\n"
+            f"✅ **{resolved_count}** tracks added to queue\n"
+            f"❌ **{failed_count}** tracks could not be matched"
+        )
+        summary_embed.set_author(name="Spotify → YouTube", icon_url=self.PROVIDER_ICONS["spotify"])
+        if spotify_tracks[0].thumbnail:
+            summary_embed.set_thumbnail(url=spotify_tracks[0].thumbnail)
+        try:
+            await msg.edit(embed=summary_embed)
+        except discord.HTTPException:
+            pass
+
+        # Log import
+        await self.import_repo.log_import(
+            spotify_url=url,
+            spotify_type=collection_type,
+            track_count=resolved_count,
+            imported_by=interaction.user.id,
+            guild_id=interaction.guild_id
+        )
 
     @app_commands.command(name="pause", description="Pause playback of the current track.")
     @guild_only_command()

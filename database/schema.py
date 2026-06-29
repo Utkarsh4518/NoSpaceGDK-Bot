@@ -113,5 +113,31 @@ MIGRATIONS: Dict[int, MigrationScript] = {
             DROP TABLE IF EXISTS playlists;
             DROP TABLE IF EXISTS music_tracks;
         """
+    },
+    4: {
+        "up": """
+            CREATE TABLE IF NOT EXISTS spotify_match_cache (
+                spotify_id TEXT PRIMARY KEY,
+                youtube_url TEXT NOT NULL,
+                track_title TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                resolved_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS spotify_imports (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                spotify_url TEXT NOT NULL,
+                spotify_type TEXT NOT NULL,
+                track_count INTEGER NOT NULL DEFAULT 0,
+                imported_by INTEGER NOT NULL,
+                guild_id INTEGER NOT NULL,
+                imported_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """,
+        "down": """
+            DROP TABLE IF EXISTS spotify_imports;
+            DROP TABLE IF EXISTS spotify_match_cache;
+        """
     }
 }

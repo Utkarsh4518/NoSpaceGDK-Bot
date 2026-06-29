@@ -26,6 +26,8 @@ class BotConfig:
     development_guild_id: int | None
     database_path: Path
     cache_ttl: int
+    spotify_client_id: str | None
+    spotify_client_secret: str | None
 
 
 def load_config() -> BotConfig:
@@ -94,6 +96,10 @@ def load_config() -> BotConfig:
         raise ConfigurationError(f"Environment variable 'CACHE_TTL' must be an integer, got: '{cache_ttl_raw}'")
     cache_ttl = int(cache_ttl_raw)
 
+    # 9. Handle Spotify credentials (Optional - graceful degradation)
+    spotify_client_id = os.getenv("SPOTIFY_CLIENT_ID")
+    spotify_client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
+
     return BotConfig(
         discord_token=discord_token,
         client_id=client_id,
@@ -102,5 +108,7 @@ def load_config() -> BotConfig:
         owner_ids=owner_ids,
         development_guild_id=development_guild_id,
         database_path=database_path,
-        cache_ttl=cache_ttl
+        cache_ttl=cache_ttl,
+        spotify_client_id=spotify_client_id,
+        spotify_client_secret=spotify_client_secret
     )
