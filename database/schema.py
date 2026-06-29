@@ -65,5 +65,53 @@ MIGRATIONS: Dict[int, MigrationScript] = {
             DROP TABLE IF EXISTS command_usages;
             DROP TABLE IF EXISTS bot_settings;
         """
+    },
+    3: {
+        "up": """
+            CREATE TABLE IF NOT EXISTS music_tracks (
+                uuid TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                artist TEXT NOT NULL,
+                duration REAL NOT NULL,
+                thumbnail TEXT,
+                provider TEXT NOT NULL,
+                url TEXT NOT NULL,
+                requested_by INTEGER NOT NULL,
+                isrc TEXT,
+                metadata TEXT,
+                added_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS playlists (
+                uuid TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                owner_id INTEGER NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS playlist_tracks (
+                playlist_uuid TEXT NOT NULL,
+                track_uuid TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                PRIMARY KEY (playlist_uuid, track_uuid),
+                FOREIGN KEY (playlist_uuid) REFERENCES playlists (uuid) ON DELETE CASCADE,
+                FOREIGN KEY (track_uuid) REFERENCES music_tracks (uuid) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS playback_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                track_uuid TEXT NOT NULL,
+                played_by INTEGER NOT NULL,
+                played_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (track_uuid) REFERENCES music_tracks (uuid) ON DELETE CASCADE
+            );
+        """,
+        "down": """
+            DROP TABLE IF EXISTS playback_history;
+            DROP TABLE IF EXISTS playlist_tracks;
+            DROP TABLE IF EXISTS playlists;
+            DROP TABLE IF EXISTS music_tracks;
+        """
     }
 }

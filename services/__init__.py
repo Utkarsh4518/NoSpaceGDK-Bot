@@ -10,3 +10,5 @@ from services.cache_service import CacheService
 from services.logging_service import LoggingService
 from services.response_service import ResponseService
 from services.bot_service import BotService
+from services.music.music_service import MusicService
+

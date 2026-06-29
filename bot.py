@@ -152,10 +152,14 @@ class NoSpaceFGKBot(commands.Bot):
 
         # 2. Setup Dependency Injection (DI) Container & Register Services
         from services import (
-            ConfigService, CacheService, LoggingService, ResponseService, BotService
+            ConfigService, CacheService, LoggingService, ResponseService, BotService, MusicService
+        )
+        from services.music import (
+            PlayerManager, ProviderManager, TrackManager
         )
         from repositories import (
-            GuildRepository, UserRepository, SettingsRepository, UsageRepository
+            GuildRepository, UserRepository, SettingsRepository, UsageRepository,
+            MusicRepository, PlaylistRepository, HistoryRepository
         )
 
         container = ServiceContainer()
@@ -169,6 +173,27 @@ class NoSpaceFGKBot(commands.Bot):
         container.register(UserRepository, lambda: UserRepository(self.db))
         container.register(SettingsRepository, lambda: SettingsRepository(self.db))
         container.register(UsageRepository, lambda: UsageRepository(self.db))
+        container.register(MusicRepository, lambda: MusicRepository(self.db))
+        container.register(PlaylistRepository, lambda: PlaylistRepository(self.db))
+        container.register(HistoryRepository, lambda: HistoryRepository(self.db))
+
+        # Providers Manager setup
+        def make_provider_manager() -> ProviderManager:
+            pm = ProviderManager()
+            from providers import YouTubeProvider, SpotifyProvider, SoundCloudProvider
+            pm.register_provider("youtube", YouTubeProvider())
+            pm.register_provider("spotify", SpotifyProvider())
+            pm.register_provider("soundcloud", SoundCloudProvider())
+            return pm
+
+        container.register(ProviderManager, make_provider_manager)
+
+        # Player lifecycle managers
+        container.register(PlayerManager, lambda: PlayerManager(self))
+        container.register(TrackManager, lambda: TrackManager(
+            music_repo=container.get(MusicRepository),
+            cache_service=container.get(CacheService)
+        ))
 
         # Services
         container.register(LoggingService, lambda: LoggingService(
@@ -180,6 +205,13 @@ class NoSpaceFGKBot(commands.Bot):
             user_repo=container.get(UserRepository),
             settings_repo=container.get(SettingsRepository),
             cache_service=container.get(CacheService)
+        ))
+        container.register(MusicService, lambda: MusicService(
+            player_manager=container.get(PlayerManager),
+            provider_manager=container.get(ProviderManager),
+            track_manager=container.get(TrackManager),
+            playlist_repo=container.get(PlaylistRepository),
+            history_repo=container.get(HistoryRepository)
         ))
 
         self.container = container
@@ -303,6 +335,12 @@ class NoSpaceFGKBot(commands.Bot):
         """Override close to log shutdown operations cleanly and close database handles."""
         logger.info("Closing Discord connection...")
         await super().close()
+        if self.container:
+            try:
+                player_manager = self.container.get(PlayerManager)
+                await player_manager.clean_all_players()
+            except Exception as e:
+                logger.error(f"Error cleaning player sessions on close: {e}")
         if self.db:
             await self.db.disconnect()
         log_shutdown()
