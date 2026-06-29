@@ -28,6 +28,18 @@ class MessageEvents(commands.Cog, name="MessageEvents"):
         if message.author == self.bot.user:
             return
 
+        # Trigger Automod message scan
+        if hasattr(self.bot, "container") and self.bot.container:
+            try:
+                from services.moderation.automod_service import AutomodService
+                automod = self.bot.container.get(AutomodService)
+                if automod:
+                    flagged = await automod.scan_message(message)
+                    if flagged:
+                        return
+            except Exception as e:
+                logger.error(f"MessageEvents: Failed to execute automod scan: {e}")
+
         guild_str = f"Guild: {message.guild.name} ({message.guild.id})" if message.guild else "DMs"
         logger.debug(f"[MESSAGE] Author: {message.author} ({message.author.id}) | {guild_str} | Content: {message.content[:100]}")
 

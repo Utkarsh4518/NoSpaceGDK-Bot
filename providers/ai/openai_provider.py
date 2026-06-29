@@ -33,7 +33,8 @@ class OpenAIProvider(BaseAIProvider):
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict[str, Any]]] = None
     ) -> Dict[str, Any]:
         target_model = model or "gpt-4o-mini"
         payload = {
@@ -43,6 +44,8 @@ class OpenAIProvider(BaseAIProvider):
         }
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
 
         url = f"{self._base_url}/chat/completions"
         try:
@@ -53,11 +56,14 @@ class OpenAIProvider(BaseAIProvider):
                         raise Exception(f"OpenAI error status={resp.status}: {err_text}")
 
                     data = await resp.json()
-                    content = data["choices"][0]["message"]["content"]
+                    message = data["choices"][0]["message"]
+                    content = message.get("content", "")
+                    tool_calls = message.get("tool_calls", [])
                     usage = data.get("usage", {})
                     
                     return {
                         "content": content,
+                        "tool_calls": tool_calls,
                         "prompt_tokens": usage.get("prompt_tokens", self.count_tokens(str(messages))),
                         "completion_tokens": usage.get("completion_tokens", self.count_tokens(content)),
                         "model": target_model
@@ -71,7 +77,8 @@ class OpenAIProvider(BaseAIProvider):
         messages: List[Dict[str, str]],
         model: Optional[str] = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None
+        max_tokens: Optional[int] = None,
+        tools: Optional[List[Dict[str, Any]]] = None
     ) -> AsyncGenerator[Dict[str, Any], None]:
         target_model = model or "gpt-4o-mini"
         payload = {
@@ -82,6 +89,8 @@ class OpenAIProvider(BaseAIProvider):
         }
         if max_tokens:
             payload["max_tokens"] = max_tokens
+        if tools:
+            payload["tools"] = tools
 
         url = f"{self._base_url}/chat/completions"
         try:
@@ -102,10 +111,15 @@ class OpenAIProvider(BaseAIProvider):
 
                         try:
                             chunk = json.loads(data_body)
-                            delta = chunk["choices"][0]["delta"].get("content", "")
-                            if delta:
+                            delta_info = chunk["choices"][0]["delta"]
+                            delta = delta_info.get("content", "")
+                            # If there is a tool call delta, pass it through. (More complex parsing may be needed for full streaming support)
+                            tool_calls = delta_info.get("tool_calls", [])
+                            
+                            if delta or tool_calls:
                                 yield {
                                     "delta": delta,
+                                    "tool_calls": tool_calls,
                                     "prompt_tokens": 0,
                                     "completion_tokens": 0
                                 }

@@ -15,3 +15,12 @@ from repositories.spotify_cache_repo import SpotifyCacheRepository
 from repositories.spotify_import_repo import SpotifyImportRepository
 from repositories.conversation_repository import ConversationRepository
 from repositories.prompt_repository import PromptRepository
+from repositories.warning_repository import WarningRepository
+from repositories.case_repository import CaseRepository
+from repositories.automod_repository import AutomodRepository
+from repositories.guild_settings_repository import GuildSettingsRepository
+from repositories.moderation_stats_repository import ModerationStatsRepository
+from repositories.fun_repository import FunRepository
+from repositories.leaderboard_repository import LeaderboardRepository
+
+

@@ -167,8 +167,27 @@ class NoSpaceFGKBot(commands.Bot):
             GuildRepository, UserRepository, SettingsRepository, UsageRepository,
             MusicRepository, PlaylistRepository, HistoryRepository,
             SpotifyCacheRepository, SpotifyImportRepository,
-            ConversationRepository, PromptRepository
+            ConversationRepository, PromptRepository, WarningRepository,
+            CaseRepository, AutomodRepository, GuildSettingsRepository,
+            ModerationStatsRepository, FunRepository, LeaderboardRepository
         )
+        from services.ai.agent.agent import Agent
+        from services.moderation.audit_service import AuditService
+        from services.moderation.case_service import CaseService
+        from services.moderation.warning_service import WarningService
+        from services.moderation.lockdown_service import LockdownService
+        from services.moderation.automod_service import AutomodService
+        from services.moderation.moderation_service import ModerationService
+        from services.fun.meme_service import MemeService
+        from services.fun.joke_service import JokeService
+        from services.fun.gif_service import GifService
+        from services.fun.quote_service import QuoteService
+        from services.fun.fact_service import FactService
+        from services.fun.coinflip_service import CoinflipService
+        from services.fun.dice_service import DiceService
+        from services.fun.rps_service import RPSService
+        from services.fun.eightball_service import EightBallService
+        from services.fun.game_service import GameService
 
         container = ServiceContainer()
 
@@ -188,6 +207,13 @@ class NoSpaceFGKBot(commands.Bot):
         container.register(SpotifyImportRepository, lambda: SpotifyImportRepository(self.db))
         container.register(ConversationRepository, lambda: ConversationRepository(self.db))
         container.register(PromptRepository, lambda: PromptRepository(self.db))
+        container.register(WarningRepository, lambda: WarningRepository(self.db))
+        container.register(CaseRepository, lambda: CaseRepository(self.db))
+        container.register(AutomodRepository, lambda: AutomodRepository(self.db))
+        container.register(GuildSettingsRepository, lambda: GuildSettingsRepository(self.db))
+        container.register(ModerationStatsRepository, lambda: ModerationStatsRepository(self.db))
+        container.register(FunRepository, lambda: FunRepository(self.db))
+        container.register(LeaderboardRepository, lambda: LeaderboardRepository(self.db))
 
 
         # Providers setup
@@ -320,13 +346,78 @@ class NoSpaceFGKBot(commands.Bot):
             context_manager=container.get(ContextManager)
         ))
 
+        # Moderation services
+        container.register(AuditService, lambda: AuditService(
+            bot=self,
+            db=self.db,
+            settings_repo=container.get(GuildSettingsRepository)
+        ))
+        container.register(CaseService, lambda: CaseService(
+            case_repo=container.get(CaseRepository),
+            stats_repo=container.get(ModerationStatsRepository),
+            audit_service=container.get(AuditService)
+        ))
+        container.register(WarningService, lambda: WarningService(
+            warning_repo=container.get(WarningRepository),
+            settings_repo=container.get(GuildSettingsRepository),
+            case_service=container.get(CaseService)
+        ))
+        container.register(LockdownService, lambda: LockdownService(
+            db=self.db
+        ))
+        container.register(AutomodService, lambda: AutomodService(
+            bot=self,
+            automod_repo=container.get(AutomodRepository),
+            warning_service=container.get(WarningService),
+            case_service=container.get(CaseService)
+        ))
+        container.register(ModerationService, lambda: ModerationService(
+            bot=self,
+            settings_repo=container.get(GuildSettingsRepository),
+            stats_repo=container.get(ModerationStatsRepository),
+            audit_service=container.get(AuditService),
+            case_service=container.get(CaseService),
+            warning_service=container.get(WarningService),
+            lockdown_service=container.get(LockdownService),
+            automod_service=container.get(AutomodService)
+        ))
+        
+        # Fun & Game services
+        container.register(MemeService, lambda: MemeService(
+            repo=container.get(FunRepository)
+        ))
+        container.register(JokeService, lambda: JokeService(
+            repo=container.get(FunRepository)
+        ))
+        container.register(GifService, lambda: GifService())
+        container.register(QuoteService, lambda: QuoteService(
+            repo=container.get(FunRepository)
+        ))
+        container.register(FactService, lambda: FactService(
+            repo=container.get(FunRepository)
+        ))
+        container.register(CoinflipService, lambda: CoinflipService())
+        container.register(DiceService, lambda: DiceService())
+        container.register(RPSService, lambda: RPSService())
+        container.register(EightBallService, lambda: EightBallService())
+        container.register(GameService, lambda: GameService(
+            leaderboard_repo=container.get(LeaderboardRepository)
+        ))
+
+        # AI Agent Framework
+        container.register(Agent, lambda: Agent(
+            bot=self,
+            service_container=container
+        ))
+
         # Core AI coordinator facade
         container.register(AIService, lambda: AIService(
             conversation_manager=container.get(ConversationManager),
             provider_router=container.get(AIProviderRouter),
             prompt_manager=container.get(PromptManager),
             token_manager=container.get(TokenManager),
-            default_model=self.config.default_model
+            default_model=self.config.default_model,
+            agent=container.get(Agent)
         ))
 
         self.container = container
@@ -447,16 +538,63 @@ class NoSpaceFGKBot(commands.Bot):
                 log_exception(e, f"Failed to reload cog {extension_name}:")
 
     async def close(self) -> None:
-        """Override close to log shutdown operations cleanly and close database handles."""
-        logger.info("Closing Discord connection...")
-        await super().close()
+        """Override close to perform a strict sequential graceful shutdown."""
+        import asyncio
+        import time
+        from services.music.player_manager import PlayerManager
+        from services.cache_service import CacheService
+
+        logger.info("Starting sequential graceful shutdown...")
+        start_time = time.perf_counter()
+
+        # 1. Stop active playback & Disconnect voice clients & Flush pending queues
         if self.container:
             try:
                 player_manager = self.container.get(PlayerManager)
                 await player_manager.clean_all_players()
+                logger.info("Shutdown lifecycle: Voice connections and player sessions successfully cleaned up.")
             except Exception as e:
-                logger.error(f"Error cleaning player sessions on close: {e}")
+                logger.error(f"Shutdown lifecycle error cleaning player sessions on close: {e}")
+
+        # 2. Flush caches
+        if self.container:
+            try:
+                cache_service = self.container.get(CacheService)
+                cache_service.clear()
+                logger.info("Shutdown lifecycle: Cache service flushed.")
+            except Exception as e:
+                logger.error(f"Shutdown lifecycle error flushing caches on close: {e}")
+
+        # 3. Close database connection pool
         if self.db:
-            await self.db.disconnect()
+            try:
+                await self.db.disconnect()
+                logger.info("Shutdown lifecycle: Database connection closed.")
+            except Exception as e:
+                logger.error(f"Shutdown lifecycle error disconnecting database: {e}")
+
+        # 4. Close gateway connection (Close gateway)
+        logger.info("Shutdown lifecycle: Closing Discord gateway connection...")
+        try:
+            await super().close()
+            logger.info("Shutdown lifecycle: Discord gateway connection closed.")
+        except Exception as e:
+            logger.error(f"Shutdown lifecycle error closing gateway connection: {e}")
+
+        # 5. Cancel pending asyncio tasks to prevent task leaks
+        try:
+            current_task = asyncio.current_task()
+            tasks = [t for t in asyncio.all_tasks() if t is not current_task]
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+                logger.info(f"Shutdown lifecycle: Cancelled {len(tasks)} pending asyncio tasks.")
+        except Exception as e:
+            logger.error(f"Shutdown lifecycle error cancelling pending tasks: {e}")
+
+        latency = time.perf_counter() - start_time
+        logger.info(f"Graceful shutdown completed successfully in {latency:.4f}s.")
         log_shutdown()
+
 

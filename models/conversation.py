@@ -8,18 +8,32 @@ from typing import List, Optional
 @dataclass
 class Message:
     """A single chat message within a conversation."""
-    role: str  # 'system', 'user', or 'assistant'
+    role: str  # 'system', 'developer', 'user', 'assistant', or 'tool'
     content: str
     prompt_tokens: int = 0
     completion_tokens: int = 0
     created_at: datetime.datetime = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
+    tool_calls: Optional[List[dict]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None
+    provider: Optional[str] = None
+    model: Optional[str] = None
+    latency: Optional[float] = None
+    reasoning_metadata: Optional[dict] = None
 
     def to_dict(self) -> dict:
-        """Convert message details to a API compatible format."""
-        return {
+        """Convert message details to an API compatible format."""
+        d = {
             "role": self.role,
             "content": self.content
         }
+        if self.tool_calls:
+            d["tool_calls"] = self.tool_calls
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.name:
+            d["name"] = self.name
+        return d
 
 
 @dataclass
@@ -31,5 +45,6 @@ class Conversation:
     active_model: str
     active_provider: str
     messages: List[Message] = field(default_factory=list)
+    state: Optional[dict] = None
     created_at: datetime.datetime = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))
     updated_at: datetime.datetime = field(default_factory=lambda: datetime.datetime.now(datetime.timezone.utc))

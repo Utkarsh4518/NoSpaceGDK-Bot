@@ -191,5 +191,227 @@ MIGRATIONS: Dict[int, MigrationScript] = {
             DROP TABLE IF EXISTS ai_messages;
             DROP TABLE IF EXISTS ai_conversations;
         """
+    },
+    6: {
+        "up": """
+            CREATE TABLE IF NOT EXISTS warnings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                reason TEXT,
+                points INTEGER DEFAULT 1,
+                is_expired INTEGER DEFAULT 0,
+                expires_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS cases (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                case_type TEXT NOT NULL,
+                user_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                reason TEXT,
+                duration_seconds INTEGER,
+                status TEXT NOT NULL DEFAULT 'active',
+                channel_id INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS timeouts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                duration_seconds INTEGER NOT NULL,
+                expires_at TIMESTAMP NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS bans (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                reason TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS kicks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                reason TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS locks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                target_id INTEGER NOT NULL,
+                target_type TEXT NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                original_overwrites TEXT,
+                is_active INTEGER DEFAULT 1,
+                expires_at TIMESTAMP,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS automod_rules (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                rule_type TEXT NOT NULL,
+                config TEXT NOT NULL,
+                is_enabled INTEGER DEFAULT 1,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS moderation_audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                action_type TEXT NOT NULL,
+                moderator_id INTEGER NOT NULL,
+                target_id INTEGER,
+                details TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS moderation_statistics (
+                guild_id INTEGER PRIMARY KEY,
+                total_warns INTEGER DEFAULT 0,
+                total_kicks INTEGER DEFAULT 0,
+                total_bans INTEGER DEFAULT 0,
+                total_timeouts INTEGER DEFAULT 0,
+                total_automod_triggers INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS guild_settings (
+                guild_id INTEGER PRIMARY KEY,
+                default_timeout_seconds INTEGER DEFAULT 3600,
+                default_warning_limit INTEGER DEFAULT 3,
+                audit_channel_id INTEGER,
+                moderator_roles TEXT,
+                protected_roles TEXT,
+                ignored_channels TEXT,
+                ignored_roles TEXT
+            );
+        """,
+        "down": """
+            DROP TABLE IF EXISTS guild_settings;
+            DROP TABLE IF EXISTS moderation_statistics;
+            DROP TABLE IF EXISTS moderation_audit_logs;
+            DROP TABLE IF EXISTS automod_rules;
+            DROP TABLE IF EXISTS locks;
+            DROP TABLE IF EXISTS kicks;
+            DROP TABLE IF EXISTS bans;
+            DROP TABLE IF EXISTS timeouts;
+            DROP TABLE IF EXISTS cases;
+            DROP TABLE IF EXISTS warnings;
+        """
+    },
+    7: {
+        "up": """
+            CREATE TABLE IF NOT EXISTS memes_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                title TEXT,
+                url TEXT NOT NULL,
+                post_link TEXT,
+                subreddit TEXT,
+                nsfw INTEGER DEFAULT 0,
+                cached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS jokes_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                setup TEXT NOT NULL,
+                delivery TEXT,
+                cached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS quotes_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category TEXT NOT NULL,
+                content TEXT NOT NULL,
+                author TEXT,
+                cached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS facts_cache (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                content TEXT NOT NULL,
+                cached_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS games (
+                id TEXT PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                game_type TEXT NOT NULL,
+                players TEXT NOT NULL,
+                status TEXT NOT NULL,
+                winner_id INTEGER,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS game_statistics (
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                game_type TEXT NOT NULL,
+                wins INTEGER DEFAULT 0,
+                losses INTEGER DEFAULT 0,
+                ties INTEGER DEFAULT 0,
+                longest_win_streak INTEGER DEFAULT 0,
+                current_win_streak INTEGER DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id, game_type)
+            );
+
+            CREATE TABLE IF NOT EXISTS leaderboards (
+                guild_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                metric TEXT NOT NULL,
+                value INTEGER DEFAULT 0,
+                PRIMARY KEY (guild_id, user_id, metric)
+            );
+
+            CREATE TABLE IF NOT EXISTS fun_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER,
+                user_id INTEGER NOT NULL,
+                command_name TEXT NOT NULL,
+                executed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """,
+        "down": """
+            DROP TABLE IF EXISTS fun_usage;
+            DROP TABLE IF EXISTS leaderboards;
+            DROP TABLE IF EXISTS game_statistics;
+            DROP TABLE IF EXISTS games;
+            DROP TABLE IF EXISTS facts_cache;
+            DROP TABLE IF EXISTS quotes_cache;
+            DROP TABLE IF EXISTS jokes_cache;
+            DROP TABLE IF EXISTS memes_cache;
+        """
+    },
+    8: {
+        "up": """
+            ALTER TABLE ai_messages ADD COLUMN tool_calls TEXT;
+            ALTER TABLE ai_messages ADD COLUMN tool_call_id TEXT;
+            ALTER TABLE ai_messages ADD COLUMN name TEXT;
+            ALTER TABLE ai_messages ADD COLUMN provider TEXT;
+            ALTER TABLE ai_messages ADD COLUMN model TEXT;
+            ALTER TABLE ai_messages ADD COLUMN latency REAL;
+            ALTER TABLE ai_messages ADD COLUMN reasoning_metadata TEXT;
+            
+            ALTER TABLE ai_conversations ADD COLUMN state TEXT;
+        """,
+        "down": """
+            SELECT 1;
+        """
     }
 }
+
