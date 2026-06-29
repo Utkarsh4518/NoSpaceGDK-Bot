@@ -153,16 +153,21 @@ class NoSpaceFGKBot(commands.Bot):
 
         # 2. Setup Dependency Injection (DI) Container & Register Services
         from services import (
-            ConfigService, CacheService, LoggingService, ResponseService, BotService, MusicService
+            ConfigService, CacheService, LoggingService, ResponseService, BotService, MusicService,
+            AIService
         )
         from services.music import (
             PlayerManager, ProviderManager, TrackManager,
             MatchingService, MetadataService, ProviderRouter
         )
+        from services.ai import (
+            ConversationManager, AIProviderRouter, PromptManager, TokenManager, ContextManager
+        )
         from repositories import (
             GuildRepository, UserRepository, SettingsRepository, UsageRepository,
             MusicRepository, PlaylistRepository, HistoryRepository,
-            SpotifyCacheRepository, SpotifyImportRepository
+            SpotifyCacheRepository, SpotifyImportRepository,
+            ConversationRepository, PromptRepository
         )
 
         container = ServiceContainer()
@@ -181,6 +186,9 @@ class NoSpaceFGKBot(commands.Bot):
         container.register(HistoryRepository, lambda: HistoryRepository(self.db))
         container.register(SpotifyCacheRepository, lambda: SpotifyCacheRepository(self.db))
         container.register(SpotifyImportRepository, lambda: SpotifyImportRepository(self.db))
+        container.register(ConversationRepository, lambda: ConversationRepository(self.db))
+        container.register(PromptRepository, lambda: PromptRepository(self.db))
+
 
         # Providers setup
         from providers import YouTubeProvider, SoundCloudProvider
@@ -253,6 +261,72 @@ class NoSpaceFGKBot(commands.Bot):
             track_manager=container.get(TrackManager),
             playlist_repo=container.get(PlaylistRepository),
             history_repo=container.get(HistoryRepository)
+        ))
+
+        # Setup AI provider router and register active adapters
+        ai_router = AIProviderRouter(self.config.ai_provider)
+
+        # 1. OpenAI
+        if self.config.openai_api_key:
+            from providers.ai import OpenAIProvider
+            ai_router.register_provider("openai", OpenAIProvider(self.config.openai_api_key))
+        else:
+            logger.warning("AI system: OpenAI key missing. Provider 'openai' disabled.")
+
+        # 2. Gemini
+        if self.config.gemini_api_key:
+            from providers.ai import GeminiProvider
+            ai_router.register_provider("gemini", GeminiProvider(self.config.gemini_api_key))
+        else:
+            logger.warning("AI system: Gemini key missing. Provider 'gemini' disabled.")
+
+        # 3. Claude
+        if self.config.anthropic_api_key:
+            from providers.ai import ClaudeProvider
+            ai_router.register_provider("claude", ClaudeProvider(self.config.anthropic_api_key))
+        else:
+            logger.warning("AI system: Claude key missing. Provider 'claude' disabled.")
+
+        # 4. OpenRouter
+        if self.config.openrouter_api_key:
+            from providers.ai import OpenRouterProvider
+            ai_router.register_provider("openrouter", OpenRouterProvider(self.config.openrouter_api_key))
+        else:
+            logger.warning("AI system: OpenRouter key missing. Provider 'openrouter' disabled.")
+
+        # 5. Ollama (Always enabled since it runs locally)
+        from providers.ai import OllamaProvider
+        ai_router.register_provider("ollama", OllamaProvider(self.config.ollama_base_url))
+
+        container.register(AIProviderRouter, lambda: ai_router)
+
+        # Token usage log auditor
+        container.register(TokenManager, lambda: TokenManager(self.db))
+
+        # Prompt resolution managers
+        container.register(PromptManager, lambda: PromptManager(
+            prompt_repo=container.get(PromptRepository),
+            default_prompt=self.config.system_prompt
+        ))
+
+        # Context constraints setup
+        container.register(ContextManager, lambda: ContextManager(
+            max_messages=self.config.max_context_messages
+        ))
+
+        # Conversation history session managers
+        container.register(ConversationManager, lambda: ConversationManager(
+            conversation_repo=container.get(ConversationRepository),
+            context_manager=container.get(ContextManager)
+        ))
+
+        # Core AI coordinator facade
+        container.register(AIService, lambda: AIService(
+            conversation_manager=container.get(ConversationManager),
+            provider_router=container.get(AIProviderRouter),
+            prompt_manager=container.get(PromptManager),
+            token_manager=container.get(TokenManager),
+            default_model=self.config.default_model
         ))
 
         self.container = container

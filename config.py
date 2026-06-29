@@ -28,6 +28,15 @@ class BotConfig:
     cache_ttl: int
     spotify_client_id: str | None
     spotify_client_secret: str | None
+    openai_api_key: str | None
+    gemini_api_key: str | None
+    anthropic_api_key: str | None
+    openrouter_api_key: str | None
+    ollama_base_url: str
+    ai_provider: str
+    default_model: str
+    max_context_messages: int
+    system_prompt: str
 
 
 def load_config() -> BotConfig:
@@ -100,6 +109,27 @@ def load_config() -> BotConfig:
     spotify_client_id = os.getenv("SPOTIFY_CLIENT_ID")
     spotify_client_secret = os.getenv("SPOTIFY_CLIENT_SECRET")
 
+    # 10. Handle AI framework configurations
+    openai_api_key = os.getenv("OPENAI_API_KEY")
+    gemini_api_key = os.getenv("GEMINI_API_KEY")
+    anthropic_api_key = os.getenv("ANTHROPIC_API_KEY")
+    openrouter_api_key = os.getenv("OPENROUTER_API_KEY")
+    ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    ai_provider = os.getenv("AI_PROVIDER", "gemini").lower()
+    default_model = os.getenv("DEFAULT_MODEL", "gemini-1.5-flash")
+    
+    max_context_messages_raw = os.getenv("MAX_CONTEXT_MESSAGES", "20")
+    if not is_integer(max_context_messages_raw):
+        raise ConfigurationError(
+            f"Environment variable 'MAX_CONTEXT_MESSAGES' must be an integer, got: '{max_context_messages_raw}'"
+        )
+    max_context_messages = int(max_context_messages_raw)
+    
+    system_prompt = os.getenv(
+        "SYSTEM_PROMPT", 
+        "You are NoSpaceFGK, a helpful, friendly, and knowledgeable Discord assistant."
+    )
+
     return BotConfig(
         discord_token=discord_token,
         client_id=client_id,
@@ -110,5 +140,14 @@ def load_config() -> BotConfig:
         database_path=database_path,
         cache_ttl=cache_ttl,
         spotify_client_id=spotify_client_id,
-        spotify_client_secret=spotify_client_secret
+        spotify_client_secret=spotify_client_secret,
+        openai_api_key=openai_api_key,
+        gemini_api_key=gemini_api_key,
+        anthropic_api_key=anthropic_api_key,
+        openrouter_api_key=openrouter_api_key,
+        ollama_base_url=ollama_base_url,
+        ai_provider=ai_provider,
+        default_model=default_model,
+        max_context_messages=max_context_messages,
+        system_prompt=system_prompt
     )

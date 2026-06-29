@@ -139,5 +139,57 @@ MIGRATIONS: Dict[int, MigrationScript] = {
             DROP TABLE IF EXISTS spotify_imports;
             DROP TABLE IF EXISTS spotify_match_cache;
         """
+    },
+    5: {
+        "up": """
+            CREATE TABLE IF NOT EXISTS ai_conversations (
+                id TEXT PRIMARY KEY,
+                target_id INTEGER NOT NULL,
+                target_type TEXT NOT NULL,
+                active_model TEXT NOT NULL,
+                active_provider TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL DEFAULT 0,
+                completion_tokens INTEGER NOT NULL DEFAULT 0,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (conversation_id) REFERENCES ai_conversations (id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_prompts (
+                id TEXT PRIMARY KEY,
+                target_id INTEGER NOT NULL,
+                target_type TEXT NOT NULL,
+                prompt_text TEXT NOT NULL,
+                created_by INTEGER NOT NULL,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS ai_token_usage (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER,
+                user_id INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                model TEXT NOT NULL,
+                prompt_tokens INTEGER NOT NULL,
+                completion_tokens INTEGER NOT NULL,
+                total_tokens INTEGER NOT NULL,
+                estimated_cost REAL NOT NULL,
+                used_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+        """,
+        "down": """
+            DROP TABLE IF EXISTS ai_token_usage;
+            DROP TABLE IF EXISTS ai_prompts;
+            DROP TABLE IF EXISTS ai_messages;
+            DROP TABLE IF EXISTS ai_conversations;
+        """
     }
 }

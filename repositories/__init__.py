@@ -13,4 +13,5 @@ from repositories.playlist_repository import PlaylistRepository
 from repositories.history_repository import HistoryRepository
 from repositories.spotify_cache_repo import SpotifyCacheRepository
 from repositories.spotify_import_repo import SpotifyImportRepository
-
+from repositories.conversation_repository import ConversationRepository
+from repositories.prompt_repository import PromptRepository
