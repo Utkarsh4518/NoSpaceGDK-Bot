@@ -63,6 +63,29 @@ class AIService:
             default_provider=self.providers.default_provider_name
         )
 
+    async def _get_filtered_tools_payload(self, guild_id: Optional[int]) -> Optional[List[Dict[str, Any]]]:
+        """Fetch registered tools payload, filtering out any disabled tools for this guild."""
+        if not self.agent:
+            return None
+        tools_payload = self.agent.get_tools_payload()
+        if not guild_id or not tools_payload:
+            return tools_payload
+
+        try:
+            query = "SELECT disabled_tools FROM ai_guild_configs WHERE guild_id = ?;"
+            async with self.conversations.repo.db.connection.execute(query, (guild_id,)) as cursor:
+                row = await cursor.fetchone()
+                if row and row[0]:
+                    disabled = [d.strip().lower() for d in row[0].split(",") if d.strip()]
+                    if disabled:
+                        tools_payload = [
+                            t for t in tools_payload
+                            if t.get("function", {}).get("name", "").lower() not in disabled
+                        ]
+        except Exception:
+            pass
+        return tools_payload
+
     async def ask(
         self,
         guild_id: Optional[int],
@@ -119,7 +142,7 @@ class AIService:
         provider = self.providers.get_provider(conv.active_provider)
         start_time = time.perf_counter()
         
-        tools_payload = self.agent.get_tools_payload() if self.agent else None
+        tools_payload = await self._get_filtered_tools_payload(guild_id)
         
         total_prompt_tokens = 0
         total_completion_tokens = 0
@@ -267,7 +290,7 @@ class AIService:
         provider = self.providers.get_provider(conv.active_provider)
         full_content = []
         start_time = time.perf_counter()
-        tools_payload = self.agent.get_tools_payload() if self.agent else None
+        tools_payload = await self._get_filtered_tools_payload(guild_id)
 
         history_to_save: List[Message] = []
         history_to_save.append(Message(role="user", content=prompt))

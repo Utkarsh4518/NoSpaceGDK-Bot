@@ -79,3 +79,9 @@ data/
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Test databases
+tests/*.db
+tests/*.db-shm
+tests/*.db-wal
+

@@ -188,6 +188,16 @@ class NoSpaceFGKBot(commands.Bot):
         from services.fun.rps_service import RPSService
         from services.fun.eightball_service import EightBallService
         from services.fun.game_service import GameService
+        
+        # Server repositories
+        from repository import TicketRepository, ReactionRoleRepository, WelcomeRepository, AnnouncementRepository
+        
+        # Server services
+        from services.server import (
+            WelcomeService, GoodbyeService, AutoroleService, ReactionRoleService,
+            TicketService, AnnouncementService, VerificationService
+        )
+
 
         container = ServiceContainer()
 
@@ -214,6 +224,13 @@ class NoSpaceFGKBot(commands.Bot):
         container.register(ModerationStatsRepository, lambda: ModerationStatsRepository(self.db))
         container.register(FunRepository, lambda: FunRepository(self.db))
         container.register(LeaderboardRepository, lambda: LeaderboardRepository(self.db))
+        
+        # Server repositories
+        container.register(TicketRepository, lambda: TicketRepository(self.db))
+        container.register(ReactionRoleRepository, lambda: ReactionRoleRepository(self.db))
+        container.register(WelcomeRepository, lambda: WelcomeRepository(self.db))
+        container.register(AnnouncementRepository, lambda: AnnouncementRepository(self.db))
+
 
 
         # Providers setup
@@ -420,16 +437,77 @@ class NoSpaceFGKBot(commands.Bot):
             agent=container.get(Agent)
         ))
 
+        # Server Services
+        container.register(WelcomeService, lambda: WelcomeService(
+            welcome_repo=container.get(WelcomeRepository),
+            cache_service=container.get(CacheService)
+        ))
+        container.register(GoodbyeService, lambda: GoodbyeService(
+            welcome_repo=container.get(WelcomeRepository),
+            cache_service=container.get(CacheService)
+        ))
+        container.register(AutoroleService, lambda: AutoroleService(
+            welcome_repo=container.get(WelcomeRepository),
+            cache_service=container.get(CacheService)
+        ))
+        container.register(ReactionRoleService, lambda: ReactionRoleService(
+            bot=self,
+            rr_repo=container.get(ReactionRoleRepository),
+            cache_service=container.get(CacheService)
+        ))
+        container.register(TicketService, lambda: TicketService(
+            bot=self,
+            ticket_repo=container.get(TicketRepository),
+            cache_service=container.get(CacheService)
+        ))
+        container.register(AnnouncementService, lambda: AnnouncementService(
+            bot=self,
+            announce_repo=container.get(AnnouncementRepository)
+        ))
+        container.register(VerificationService, lambda: VerificationService(
+            bot=self,
+            welcome_repo=container.get(WelcomeRepository),
+            cache_service=container.get(CacheService)
+        ))
+
         self.container = container
+
+        # Start Announcement Scheduler
+        container.get(AnnouncementService).start_scheduler()
+
+        # Load Reaction Role Persistent Views
+        await container.get(ReactionRoleService).register_all_persistent_views()
 
         # 3. Load the events extension package first
         await self._load_events()
+
 
         # 4. Dynamic loading of cogs from the cogs directory
         await self._load_cogs()
 
         # 5. Synchronize slash command tree
         await self.sync_commands()
+
+        # 6. Start Dashboard Backend (FastAPI + Uvicorn)
+        try:
+            import uvicorn
+            import logging
+            from dashboard.backend.server import app
+            from dashboard.backend.routers.websockets import manager, DashboardLogHandler
+
+            app.state.bot = self
+
+            # Setup live logs redirect to dashboard
+            log_handler = DashboardLogHandler(manager)
+            log_handler.setFormatter(logging.Formatter("[%(asctime)s] [%(levelname)s] [%(name)s]: %(message)s"))
+            logging.getLogger().addHandler(log_handler)
+
+            config = uvicorn.Config(app=app, host="0.0.0.0", port=8000, loop="asyncio", log_level="warning")
+            server = uvicorn.Server(config)
+            self.loop.create_task(server.serve())
+            logger.info("Dashboard API: Started serving on http://localhost:8000")
+        except Exception as e:
+            logger.error(f"Dashboard API: Failed to start: {e}", exc_info=True)
 
     async def _load_events(self) -> None:
         """Import and register the events listener extension.
