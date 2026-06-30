@@ -412,6 +412,110 @@ MIGRATIONS: Dict[int, MigrationScript] = {
         "down": """
             SELECT 1;
         """
+    },
+    9: {
+        "up": """
+            CREATE TABLE IF NOT EXISTS tickets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                creator_id INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                claimed_by INTEGER,
+                category_id INTEGER,
+                topic TEXT,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                closed_at TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS ticket_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ticket_id INTEGER NOT NULL,
+                author_id INTEGER NOT NULL,
+                author_name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS ticket_participants (
+                ticket_id INTEGER NOT NULL,
+                user_id INTEGER NOT NULL,
+                PRIMARY KEY (ticket_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS reaction_roles (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL,
+                emoji TEXT NOT NULL,
+                role_id INTEGER NOT NULL,
+                group_name TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS reaction_role_messages (
+                message_id INTEGER PRIMARY KEY,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                title TEXT,
+                description TEXT,
+                group_name TEXT NOT NULL,
+                type TEXT NOT NULL DEFAULT 'reaction'
+            );
+
+            CREATE TABLE IF NOT EXISTS welcome_settings (
+                guild_id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                message_text TEXT,
+                embed_json TEXT,
+                dm_enabled INTEGER DEFAULT 0,
+                enabled INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS goodbye_settings (
+                guild_id INTEGER PRIMARY KEY,
+                channel_id INTEGER,
+                message_text TEXT,
+                embed_json TEXT,
+                enabled INTEGER DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS autoroles (
+                guild_id INTEGER NOT NULL,
+                role_id INTEGER NOT NULL,
+                PRIMARY KEY (guild_id, role_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS announcements (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                guild_id INTEGER NOT NULL,
+                channel_id INTEGER NOT NULL,
+                message_text TEXT,
+                embed_json TEXT,
+                scheduled_at TIMESTAMP,
+                sent_at TIMESTAMP,
+                status TEXT NOT NULL DEFAULT 'pending'
+            );
+
+            CREATE TABLE IF NOT EXISTS verification_settings (
+                guild_id INTEGER PRIMARY KEY,
+                role_id INTEGER,
+                channel_id INTEGER,
+                enabled INTEGER DEFAULT 0,
+                type TEXT NOT NULL DEFAULT 'button'
+            );
+        """,
+        "down": """
+            DROP TABLE IF EXISTS verification_settings;
+            DROP TABLE IF EXISTS announcements;
+            DROP TABLE IF EXISTS autoroles;
+            DROP TABLE IF EXISTS goodbye_settings;
+            DROP TABLE IF EXISTS welcome_settings;
+            DROP TABLE IF EXISTS reaction_role_messages;
+            DROP TABLE IF EXISTS reaction_roles;
+            DROP TABLE IF EXISTS ticket_participants;
+            DROP TABLE IF EXISTS ticket_messages;
+            DROP TABLE IF EXISTS tickets;
+        """
     }
 }
 
