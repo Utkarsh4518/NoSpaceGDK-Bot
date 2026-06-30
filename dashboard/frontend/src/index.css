@@ -1,0 +1,32 @@
+@import "tailwindcss";
+
+@theme {
+  --color-dark-900: #09090e;
+  --color-dark-800: #11111d;
+  --color-dark-700: #18182c;
+  --color-dark-600: #22223b;
+}
+
+body {
+  @apply bg-dark-900 text-slate-100 font-sans antialiased overflow-x-hidden;
+  background-image: radial-gradient(at 0% 0%, rgba(24, 24, 44, 0.4) 0px, transparent 50%),
+                    radial-gradient(at 50% 0%, rgba(34, 34, 59, 0.3) 0px, transparent 50%);
+  background-attachment: fixed;
+}
+
+/* Glassmorphism utility card base */
+.glass-panel {
+  @apply bg-dark-800/60 backdrop-blur-md border border-slate-800/40 rounded-xl shadow-lg shadow-black/20;
+}
+
+/* Custom scrollbars */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-dark-900;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-800 rounded-md hover:bg-slate-700;
+}
