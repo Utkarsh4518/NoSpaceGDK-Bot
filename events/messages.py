@@ -31,6 +31,15 @@ class MessageEvents(commands.Cog, name="MessageEvents"):
         # Trigger Automod message scan
         if hasattr(self.bot, "container") and self.bot.container:
             try:
+                # Log ticket messages first
+                from services.server import TicketService
+                ticket_service = self.bot.container.get(TicketService)
+                if ticket_service:
+                    await ticket_service.log_ticket_message(message.channel.id, message.author, message.content)
+            except Exception as e:
+                logger.error(f"MessageEvents: Failed to log ticket message: {e}")
+
+            try:
                 from services.moderation.automod_service import AutomodService
                 automod = self.bot.container.get(AutomodService)
                 if automod:
@@ -42,6 +51,7 @@ class MessageEvents(commands.Cog, name="MessageEvents"):
 
         guild_str = f"Guild: {message.guild.name} ({message.guild.id})" if message.guild else "DMs"
         logger.debug(f"[MESSAGE] Author: {message.author} ({message.author.id}) | {guild_str} | Content: {message.content[:100]}")
+
 
     @commands.Cog.listener()
     async def on_app_command_completion(
